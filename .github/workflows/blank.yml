@@ -17,15 +17,22 @@ jobs:
       - name: Preparar o MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Compilar (Release / x64)
+      - name: Compilar BaseClasses
         working-directory: softcam
-        run: msbuild softcam.sln -p:Configuration=Release -p:Platform=x64 -p:PlatformToolset=v143 -m
+        run: msbuild src\baseclasses\BaseClasses.vcxproj -p:Configuration=Release -p:Platform=x64 -p:PlatformToolset=v143 -m
+
+      - name: Compilar softcamcore
+        working-directory: softcam
+        run: msbuild src\softcamcore\softcamcore.vcxproj -p:Configuration=Release -p:Platform=x64 -p:PlatformToolset=v143 -m
+
+      - name: Compilar a DLL (softcam)
+        working-directory: softcam
+        run: msbuild src\softcam\softcam.vcxproj -p:Configuration=Release -p:Platform=x64 -p:PlatformToolset=v143 -m
 
       - name: Localizar a DLL gerada
         shell: pwsh
         run: |
-          $dll = Get-ChildItem -Recurse -Filter softcam.dll softcam |
-                 Where-Object { $_.FullName -like "*Release*" } |
+          $dll = Get-ChildItem -Path softcam -Recurse -Filter softcam.dll |
                  Select-Object -First 1
           if (-not $dll) { Write-Error "softcam.dll nao encontrada"; exit 1 }
           Write-Host "Encontrada em: $($dll.FullName)"
