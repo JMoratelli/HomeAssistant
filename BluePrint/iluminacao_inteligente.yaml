@@ -1,0 +1,584 @@
+blueprint:
+  name: "Iluminação Inteligente por Presença (Dimmer + Alarme + Mosquito)"
+  description: >
+    Automação de iluminação baseada em presença e luminosidade, com suporte a
+    lâmpadas dimerizáveis ou não, período Dia com opção de lâmpada auxiliar
+    (junto ou substituindo a principal), período Noite sempre com a lâmpada
+    principal, modo "excesso de mosquitos", regras diferentes quando o alarme
+    está em "Home", janela de horário que ignora o sensor de luminosidade, e
+    uma condição manual avançada opcional.
+
+    Prioridade das regras (da mais alta para a mais baixa):
+      1) Condição Manual (se configurada) precisa passar, senão nada acontece
+      2) Alarme = Home e "não pode ligar normalmente" -> modo alternativo
+      3) Modo mosquito ativo -> sobrescreve cor/brilho na(s) lâmpada(s) que
+         estiverem ativas no momento
+      4) Período Dia: principal sozinha (padrão), ou + auxiliar, ou SOMENTE
+         auxiliar, dependendo da configuração
+      5) Período Noite: SEMPRE a lâmpada principal, nunca a auxiliar
+      6) Lâmpada não dimerizável (a que estiver ativa no momento) -> apenas
+         liga/desliga, sem cor
+
+    O gatilho de DESLIGAR é sempre e somente a ausência de presença pelo tempo
+    configurado - não existe nenhum outro gatilho "enquanto" rodando por trás.
+
+  domain: automation
+
+  input:
+    presence_sensor:
+      name: Sensor de Presença
+      description: Sensor binário de movimento/presença do ambiente.
+      selector:
+        entity:
+          domain: binary_sensor
+
+    illuminance_sensor:
+      name: Sensor de Luminosidade
+      description: Sensor de lux do ambiente. Só decide SE a luz liga (não o brilho).
+      selector:
+        entity:
+          domain: sensor
+          device_class: illuminance
+
+    alarm_entity:
+      name: Painel de Alarme
+      description: Entidade do alarme usada para checar se está em "Home".
+      selector:
+        entity:
+          domain: alarm_control_panel
+
+    light_target:
+      name: Lâmpada Principal
+      description: >
+        A luz que assume SEMPRE à noite, e de dia também (a menos que "usar
+        somente auxiliar" esteja ativo). Pode ser "light" ou "switch".
+      selector:
+        entity:
+          filter:
+            - domain: light
+            - domain: switch
+
+    is_dimmable:
+      name: A lâmpada principal é dimerizável?
+      description: >
+        Se SIM: usa cor/brilho quando a principal estiver ativa. Se NÃO: a
+        luz só liga/desliga.
+      selector:
+        boolean: {}
+      default: true
+
+    lux_threshold:
+      name: Limite de Luminosidade (lux)
+      description: A luz só liga por presença se a luminosidade estiver abaixo deste valor.
+      selector:
+        number:
+          min: 0
+          max: 2000
+          unit_of_measurement: "lx"
+          mode: box
+      default: 50
+
+    lux_ignore_start:
+      name: Início do período que ignora a luminosidade
+      description: >
+        Nesse intervalo de horário, a luz liga só com presença, SEM checar o
+        sensor de lux. Útil quando telas ou a própria lâmpada "enganam" o
+        sensor de luminosidade durante o dia.
+      selector:
+        time: {}
+      default: "07:00:00"
+
+    lux_ignore_end:
+      name: Fim do período que ignora a luminosidade
+      selector:
+        time: {}
+      default: "18:00:00"
+
+    presence_clear_delay:
+      name: Delay para apagar (segundos)
+      description: Tempo que a luz espera sem presença antes de apagar.
+      selector:
+        number:
+          min: 0
+          max: 1800
+          unit_of_measurement: "s"
+          mode: box
+      default: 120
+
+    periodo_section:
+      name: "🌗 Períodos Dia / Noite"
+      description: >
+        A lâmpada auxiliar (se configurada) SÓ atua no período Dia. À noite
+        é sempre a principal, sem exceção.
+      icon: mdi:theme-light-dark
+      collapsed: true
+      input:
+        day_start:
+          name: Início do período Dia
+          selector:
+            time: {}
+          default: "08:00:00"
+
+        night_start:
+          name: Início do período Noite
+          selector:
+            time: {}
+          default: "20:00:00"
+
+        night_end:
+          name: Fim do período Noite
+          selector:
+            time: {}
+          default: "07:00:00"
+
+        day_color_temp:
+          name: Temperatura de cor - Dia (quente, em Kelvin)
+          description: >
+            Quanto MENOR o valor, mais quente/amarelada a luz. Usado pela(s)
+            lâmpada(s) ativa(s) de dia, se forem dimerizáveis.
+          selector:
+            number:
+              min: 2000
+              max: 6500
+              unit_of_measurement: "K"
+              mode: slider
+          default: 2700
+
+        night_brightness:
+          name: Brilho fixo - Noite (%)
+          description: Usado pela lâmpada principal à noite, se for dimerizável.
+          selector:
+            number:
+              min: 1
+              max: 100
+              unit_of_measurement: "%"
+              mode: slider
+          default: 10
+
+        night_color_temp:
+          name: Temperatura de cor fixa - Noite (em Kelvin)
+          description: Quanto MENOR o valor, mais quente/amarelada a luz.
+          selector:
+            number:
+              min: 2000
+              max: 6500
+              unit_of_measurement: "K"
+              mode: slider
+          default: 2000
+
+        use_aux_light:
+          name: Usar lâmpada auxiliar de dia?
+          description: >
+            Se SIM, no período Dia a lâmpada auxiliar também liga, JUNTO com
+            a principal (as duas acesas). Se quiser que só a auxiliar acenda
+            (sem a principal), ative também "Usar somente auxiliar" abaixo.
+            Isso NUNCA afeta a noite - à noite é sempre a principal.
+          selector:
+            boolean: {}
+          default: false
+
+        aux_light_only:
+          name: Usar somente auxiliar de dia (sem a principal)?
+          description: >
+            Só tem efeito se "Usar lâmpada auxiliar de dia?" = SIM. Se SIM
+            aqui também, de dia liga SÓ a auxiliar (a principal fica
+            desligada). Se NÃO (padrão), de dia ligam as DUAS juntas. Não
+            afeta a noite de forma alguma.
+          selector:
+            boolean: {}
+          default: false
+
+        aux_light:
+          name: Lâmpada Auxiliar (só atua de Dia)
+          description: OPCIONAL. Só usada se "Usar lâmpada auxiliar de dia?" = SIM.
+          selector:
+            entity:
+              filter:
+                - domain: light
+                - domain: switch
+          default: ""
+
+        aux_light_is_dimmable:
+          name: A lâmpada auxiliar é dimerizável?
+          description: >
+            Se SIM: usa a Temperatura de cor - Dia e 100% de brilho. Se NÃO
+            (o mais comum - lâmpada "burra"): a auxiliar só liga/desliga.
+          selector:
+            boolean: {}
+          default: false
+
+    mosquito_section:
+      name: "🦟 Modo Mosquito"
+      description: >
+        De dia, atua na(s) lâmpada(s) que estiverem ativas (principal e/ou
+        auxiliar, conforme configurado acima). À noite, atua sempre na
+        principal. Só afeta lâmpadas dimerizáveis.
+      icon: mdi:bug
+      collapsed: true
+      input:
+        mosquito_boolean:
+          name: Input Boolean - Excesso de Mosquitos
+          description: Normalmente input_boolean.excesso_de_mosquitos.
+          selector:
+            entity:
+              domain: input_boolean
+          default: input_boolean.excesso_de_mosquitos
+
+        mosquito_brightness:
+          name: Brilho no Modo Mosquito (%)
+          selector:
+            number:
+              min: 1
+              max: 100
+              unit_of_measurement: "%"
+              mode: slider
+          default: 100
+
+        mosquito_color_temp:
+          name: Temperatura de Cor no Modo Mosquito (em Kelvin)
+          description: >
+            Padrão em 2200K (quente/âmbar), próximo do que costuma ser
+            recomendado pra afugentar insetos. Ajuste como preferir.
+          selector:
+            number:
+              min: 2000
+              max: 6500
+              unit_of_measurement: "K"
+              mode: slider
+          default: 2200
+
+    alarm_section:
+      name: "🚨 Comportamento com Alarme = Home"
+      icon: mdi:shield-home
+      collapsed: true
+      input:
+        turn_on_with_alarm_home:
+          name: Ligar por movimento com alarme em "Home"?
+          description: >
+            Se NÃO: quando o alarme estiver em "Home", a luz não liga
+            normalmente por presença. Em vez disso, usa o modo alternativo
+            definido abaixo (dimmer fixo ou luz alternativa).
+          selector:
+            boolean: {}
+          default: true
+
+        alarm_home_dimmer_level:
+          name: Brilho quando Alarme = Home (%)
+          description: >
+            Só usado se "Ligar com alarme Home?" = NÃO e a lâmpada FOR dimerizável.
+          selector:
+            number:
+              min: 1
+              max: 100
+              unit_of_measurement: "%"
+              mode: slider
+          default: 5
+
+        alarm_home_alt_light:
+          name: Luz Alternativa quando Alarme = Home
+          description: >
+            OPCIONAL. Só usado se "Ligar com alarme Home?" = NÃO e a lâmpada
+            NÃO for dimerizável. Deixe em branco se a lâmpada principal for dimerizável.
+          selector:
+            entity:
+              filter:
+                - domain: light
+                - domain: switch
+          default: ""
+
+    manual_condition_section:
+      name: "🔧 Condição Manual (Avançado)"
+      description: >
+        Opcional. Monte qualquer condição extra (usando o editor visual de
+        condições do próprio Home Assistant) que também precisa ser verdadeira
+        para a luz ligar - útil se algo específico desse ambiente estiver
+        forçando um estado indesejado e a lógica padrão não cobrir o caso.
+        Deixe vazio se não precisar de nada além do padrão.
+      icon: mdi:tune
+      collapsed: true
+      input:
+        manual_condition:
+          name: Condição Manual
+          selector:
+            condition: {}
+          default: []
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  alt_light: !input alarm_home_alt_light
+  is_dimmable: !input is_dimmable
+  turn_on_home: !input turn_on_with_alarm_home
+  use_aux_light: !input use_aux_light
+  aux_light_only: !input aux_light_only
+  aux_light_entity: !input aux_light
+  aux_is_dimmable: !input aux_light_is_dimmable
+  mosquito_entity: !input mosquito_boolean
+  mosquito_active: "{{ is_state(mosquito_entity, 'on') }}"
+
+trigger:
+  - platform: state
+    entity_id: !input presence_sensor
+    to: "on"
+    id: presence_on
+  - platform: state
+    entity_id: !input presence_sensor
+    to: "off"
+    for:
+      seconds: !input presence_clear_delay
+    id: presence_off
+
+condition: []
+
+action:
+  - choose:
+      # 1) Presença sumiu -> apaga tudo (principal, alternativa e auxiliar, se houver)
+      # Esse é o ÚNICO gatilho de desligamento que existe: sempre o "off" do
+      # sensor de presença escolhido, nunca sofre efeito da Condição Manual.
+      - conditions:
+          - condition: trigger
+            id: presence_off
+        sequence:
+          - service: light.turn_off
+            target:
+              entity_id: !input light_target
+          - if:
+              - condition: template
+                value_template: "{{ alt_light not in ['', None] }}"
+            then:
+              - service: light.turn_off
+                target:
+                  entity_id: "{{ alt_light }}"
+          - if:
+              - condition: template
+                value_template: "{{ use_aux_light and aux_light_entity not in ['', None] }}"
+            then:
+              - service: light.turn_off
+                target:
+                  entity_id: "{{ aux_light_entity }}"
+
+      # 2) Alarme = Home e bloqueio ativado -> modo alternativo
+      - conditions:
+          - condition: trigger
+            id: presence_on
+          - condition: and
+            conditions: !input manual_condition
+          - condition: or
+            conditions:
+              - condition: time
+                after: !input lux_ignore_start
+                before: !input lux_ignore_end
+              - condition: numeric_state
+                entity_id: !input illuminance_sensor
+                below: !input lux_threshold
+          - condition: state
+            entity_id: !input alarm_entity
+            state: "armed_home"
+          - condition: template
+            value_template: "{{ not turn_on_home }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ is_dimmable }}"
+            then:
+              - service: light.turn_on
+                target:
+                  entity_id: !input light_target
+                data:
+                  brightness_pct: !input alarm_home_dimmer_level
+            else:
+              - if:
+                  - condition: template
+                    value_template: "{{ alt_light not in ['', None] }}"
+                then:
+                  - service: light.turn_on
+                    target:
+                      entity_id: "{{ alt_light }}"
+
+      # 3) Comportamento normal (alarme não bloqueia)
+      - conditions:
+          - condition: trigger
+            id: presence_on
+          - condition: and
+            conditions: !input manual_condition
+          - condition: or
+            conditions:
+              - condition: time
+                after: !input lux_ignore_start
+                before: !input lux_ignore_end
+              - condition: numeric_state
+                entity_id: !input illuminance_sensor
+                below: !input lux_threshold
+        sequence:
+          - if:
+              # NOITE -> SEMPRE a principal, auxiliar nunca atua
+              - condition: time
+                after: !input night_start
+                before: !input night_end
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ use_aux_light and aux_light_entity not in ['', None] }}"
+                then:
+                  - service: light.turn_off
+                    target:
+                      entity_id: "{{ aux_light_entity }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ mosquito_active }}"
+                then:
+                  - if:
+                      - condition: template
+                        value_template: "{{ is_dimmable }}"
+                    then:
+                      - service: light.turn_on
+                        target:
+                          entity_id: !input light_target
+                        data:
+                          brightness_pct: !input mosquito_brightness
+                          color_temp_kelvin: !input mosquito_color_temp
+                else:
+                  - if:
+                      - condition: template
+                        value_template: "{{ is_dimmable }}"
+                    then:
+                      - service: light.turn_on
+                        target:
+                          entity_id: !input light_target
+                        data:
+                          brightness_pct: !input night_brightness
+                          color_temp_kelvin: !input night_color_temp
+                    else:
+                      - service: light.turn_on
+                        target:
+                          entity_id: !input light_target
+            else:
+              # DIA
+              - if:
+                  - condition: template
+                    value_template: "{{ use_aux_light and aux_light_entity not in ['', None] }}"
+                then:
+                  - if:
+                      # Usar SOMENTE auxiliar -> desliga a principal
+                      - condition: template
+                        value_template: "{{ aux_light_only }}"
+                    then:
+                      - service: light.turn_off
+                        target:
+                          entity_id: !input light_target
+                      - if:
+                          - condition: template
+                            value_template: "{{ mosquito_active }}"
+                        then:
+                          - if:
+                              - condition: template
+                                value_template: "{{ aux_is_dimmable }}"
+                            then:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: "{{ aux_light_entity }}"
+                                data:
+                                  brightness_pct: !input mosquito_brightness
+                                  color_temp_kelvin: !input mosquito_color_temp
+                        else:
+                          - if:
+                              - condition: template
+                                value_template: "{{ aux_is_dimmable }}"
+                            then:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: "{{ aux_light_entity }}"
+                                data:
+                                  brightness_pct: 100
+                                  color_temp_kelvin: !input day_color_temp
+                            else:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: "{{ aux_light_entity }}"
+                    else:
+                      # Principal + auxiliar juntas
+                      - if:
+                          - condition: template
+                            value_template: "{{ mosquito_active }}"
+                        then:
+                          - if:
+                              - condition: template
+                                value_template: "{{ is_dimmable }}"
+                            then:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: !input light_target
+                                data:
+                                  brightness_pct: !input mosquito_brightness
+                                  color_temp_kelvin: !input mosquito_color_temp
+                          - if:
+                              - condition: template
+                                value_template: "{{ aux_is_dimmable }}"
+                            then:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: "{{ aux_light_entity }}"
+                                data:
+                                  brightness_pct: !input mosquito_brightness
+                                  color_temp_kelvin: !input mosquito_color_temp
+                        else:
+                          - if:
+                              - condition: template
+                                value_template: "{{ is_dimmable }}"
+                            then:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: !input light_target
+                                data:
+                                  brightness_pct: 100
+                                  color_temp_kelvin: !input day_color_temp
+                            else:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: !input light_target
+                          - if:
+                              - condition: template
+                                value_template: "{{ aux_is_dimmable }}"
+                            then:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: "{{ aux_light_entity }}"
+                                data:
+                                  brightness_pct: 100
+                                  color_temp_kelvin: !input day_color_temp
+                            else:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: "{{ aux_light_entity }}"
+                else:
+                  # Sem auxiliar -> só a principal
+                  - if:
+                      - condition: template
+                        value_template: "{{ mosquito_active }}"
+                    then:
+                      - if:
+                          - condition: template
+                            value_template: "{{ is_dimmable }}"
+                        then:
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input light_target
+                            data:
+                              brightness_pct: !input mosquito_brightness
+                              color_temp_kelvin: !input mosquito_color_temp
+                    else:
+                      - if:
+                          - condition: template
+                            value_template: "{{ is_dimmable }}"
+                        then:
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input light_target
+                            data:
+                              brightness_pct: 100
+                              color_temp_kelvin: !input day_color_temp
+                        else:
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input light_target
