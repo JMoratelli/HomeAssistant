@@ -1,0 +1,39 @@
+name: Compilar softcam.dll
+
+# Roda ao apertar o botao "Run workflow" no GitHub (aba Actions)
+# e tambem a cada push neste repositorio.
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    runs-on: windows-latest   # runner Windows gratuito do GitHub
+
+    steps:
+      - name: Baixar o codigo oficial da softcam
+        run: git clone --depth 1 https://github.com/tshino/softcam.git
+
+      - name: Preparar o MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Compilar (Release / x64)
+        working-directory: softcam
+        run: msbuild softcam.sln -p:Configuration=Release -p:Platform=x64 -p:PlatformToolset=v143 -m
+
+      - name: Localizar a DLL gerada
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Recurse -Filter softcam.dll softcam |
+                 Where-Object { $_.FullName -like "*Release*" } |
+                 Select-Object -First 1
+          if (-not $dll) { Write-Error "softcam.dll nao encontrada"; exit 1 }
+          Write-Host "Encontrada em: $($dll.FullName)"
+          New-Item -ItemType Directory -Force -Path saida | Out-Null
+          Copy-Item $dll.FullName saida\softcam.dll
+
+      - name: Publicar a softcam.dll como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: softcam-dll
+          path: saida/softcam.dll
