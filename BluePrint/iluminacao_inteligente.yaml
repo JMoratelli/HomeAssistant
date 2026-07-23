@@ -4,13 +4,14 @@ blueprint:
     Automação de iluminação baseada em presença e luminosidade, com suporte a
     lâmpadas dimerizáveis ou não, período Dia com opção de lâmpada auxiliar
     (junto ou substituindo a principal), período Noite sempre com a lâmpada
-    principal, modo "excesso de mosquitos", regras diferentes quando o alarme
+    principal, modo "excesso de mosquitos", bloqueio total quando o alarme
     está em "Home", janela de horário que ignora o sensor de luminosidade, e
     uma condição manual avançada opcional.
 
     Prioridade das regras (da mais alta para a mais baixa):
       1) Condição Manual (se configurada) precisa passar, senão nada acontece
-      2) Alarme = Home e "não pode ligar normalmente" -> modo alternativo
+      2) Alarme = Home e "Ligar com alarme Home?" = NÃO -> nada acontece,
+         a luz não liga de jeito nenhum
       3) Modo mosquito ativo -> sobrescreve cor/brilho na(s) lâmpada(s) que
          estiverem ativas no momento
       4) Período Dia: principal sozinha (padrão), ou + auxiliar, ou SOMENTE
@@ -249,83 +250,13 @@ blueprint:
         turn_on_with_alarm_home:
           name: Ligar por movimento com alarme em "Home"?
           description: >
-            Se NÃO: quando o alarme estiver em "Home", a luz não liga
-            normalmente por presença - em vez disso, olha o campo abaixo
-            ("Não fazer nada") pra decidir entre ficar totalmente apagada ou
-            usar um modo reduzido.
+            Se SIM: a luz liga normalmente por presença (dia/noite/mosquito),
+            mesmo com o alarme em "Home". Se NÃO: a luz NÃO liga de jeito
+            nenhum enquanto o alarme estiver em "Home" - ideal pro quarto,
+            pra não acordar ninguém.
           selector:
             boolean: {}
           default: true
-
-        alarm_home_full_block:
-          name: Não fazer nada quando bloqueado (em vez de modo reduzido)?
-          description: >
-            Só tem efeito se "Ligar com alarme Home?" = NÃO. Se SIM: a luz
-            NÃO acende de jeito nenhum quando o alarme está em Home - nem no
-            modo reduzido abaixo. Ideal pro quarto, pra não acordar
-            ninguém. Se NÃO (padrão): usa o modo reduzido (dimmer/cor fixos,
-            ou luz alternativa) definido nos campos abaixo.
-          selector:
-            boolean: {}
-          default: false
-
-        alarm_home_dimmer_level:
-          name: Brilho quando Alarme = Home (%)
-          description: >
-            Só usado se "Ligar com alarme Home?" = NÃO e a lâmpada FOR dimerizável.
-          selector:
-            number:
-              min: 1
-              max: 100
-              unit_of_measurement: "%"
-              mode: slider
-          default: 5
-
-        alarm_home_use_rgb:
-          name: Usar cor RGB (em vez de temperatura de cor)?
-          description: >
-            Se SIM: usa a paleta de cor literal definida em "Cor quando
-            Alarme = Home" abaixo. Se NÃO: usa a "Temperatura de Cor quando
-            Alarme = Home" (quente/fria) no lugar. Nunca usa os dois ao
-            mesmo tempo.
-          selector:
-            boolean: {}
-          default: true
-
-        alarm_home_color:
-          name: Cor quando Alarme = Home (se "Usar cor RGB?" = SIM)
-          description: >
-            Só usado se "Ligar com alarme Home?" = NÃO, a lâmpada FOR
-            dimerizável, e "Usar cor RGB?" = SIM. Escolha a cor literal
-            (ex: um vermelho escuro, pra não incomodar a visão noturna).
-          selector:
-            color_rgb: {}
-          default: [255, 255, 0]
-
-        alarm_home_color_temp:
-          name: Temperatura de Cor quando Alarme = Home, em Kelvin (se "Usar cor RGB?" = NÃO)
-          description: >
-            Só usado se "Ligar com alarme Home?" = NÃO, a lâmpada FOR
-            dimerizável, e "Usar cor RGB?" = NÃO.
-          selector:
-            number:
-              min: 2000
-              max: 6500
-              unit_of_measurement: "K"
-              mode: slider
-          default: 2000
-
-        alarm_home_alt_light:
-          name: Luz Alternativa quando Alarme = Home
-          description: >
-            OPCIONAL. Só usado se "Ligar com alarme Home?" = NÃO e a lâmpada
-            NÃO for dimerizável. Deixe em branco se a lâmpada principal for dimerizável.
-          selector:
-            entity:
-              filter:
-                - domain: light
-                - domain: switch
-          default: ""
 
     manual_condition_section:
       name: "🔧 Condição Manual (Avançado)"
@@ -374,11 +305,8 @@ mode: restart
 max_exceeded: silent
 
 variables:
-  alt_light: !input alarm_home_alt_light
   is_dimmable: !input is_dimmable
   turn_on_home: !input turn_on_with_alarm_home
-  alarm_home_full_block: !input alarm_home_full_block
-  alarm_home_use_rgb: !input alarm_home_use_rgb
   use_aux_light: !input use_aux_light
   aux_light_only: !input aux_light_only
   aux_light_entity: !input aux_light
@@ -405,9 +333,10 @@ condition: []
 
 action:
   - choose:
-      # 1) Presença sumiu -> apaga tudo (principal, alternativa e auxiliar, se houver)
+      # 1) Presença sumiu -> apaga tudo (principal e auxiliar, se houver)
       # Esse é o ÚNICO gatilho de desligamento que existe: sempre o "off" do
-      # sensor de presença escolhido, nunca sofre efeito da Condição Manual.
+      # sensor de presença escolhido, nunca sofre efeito da Condição Manual
+      # nem do bloqueio de alarme.
       - conditions:
           - condition: trigger
             id: presence_off
@@ -417,20 +346,13 @@ action:
               entity_id: !input light_target
           - if:
               - condition: template
-                value_template: "{{ alt_light not in ['', None] }}"
-            then:
-              - service: homeassistant.turn_off
-                target:
-                  entity_id: "{{ alt_light }}"
-          - if:
-              - condition: template
                 value_template: "{{ use_aux_light and aux_light_entity not in ['', None] }}"
             then:
               - service: homeassistant.turn_off
                 target:
                   entity_id: "{{ aux_light_entity }}"
 
-      # 2) Alarme = Home e bloqueio ativado -> modo alternativo
+      # 2) Comportamento normal - só roda se o alarme NÃO estiver bloqueando
       - conditions:
           - condition: trigger
             id: [presence_on, test_trigger]
@@ -451,67 +373,15 @@ action:
                       - condition: numeric_state
                         entity_id: !input illuminance_sensor
                         below: !input lux_threshold
-          - condition: state
-            entity_id: !input alarm_entity
-            state: "armed_home"
-          - condition: template
-            value_template: "{{ not turn_on_home }}"
-        sequence:
-          - if:
-              - condition: template
-                value_template: "{{ not alarm_home_full_block }}"
-            then:
-              - if:
+          - condition: not
+            conditions:
+              - condition: and
+                conditions:
+                  - condition: state
+                    entity_id: !input alarm_entity
+                    state: "armed_home"
                   - condition: template
-                    value_template: "{{ is_dimmable }}"
-                then:
-                  - if:
-                      - condition: template
-                        value_template: "{{ alarm_home_use_rgb }}"
-                    then:
-                      - service: homeassistant.turn_on
-                        target:
-                          entity_id: !input light_target
-                        data:
-                          brightness_pct: !input alarm_home_dimmer_level
-                          rgb_color: !input alarm_home_color
-                    else:
-                      - service: homeassistant.turn_on
-                        target:
-                          entity_id: !input light_target
-                        data:
-                          brightness_pct: !input alarm_home_dimmer_level
-                          color_temp_kelvin: !input alarm_home_color_temp
-                else:
-                  - if:
-                      - condition: template
-                        value_template: "{{ alt_light not in ['', None] }}"
-                    then:
-                      - service: homeassistant.turn_on
-                        target:
-                          entity_id: "{{ alt_light }}"
-
-      # 3) Comportamento normal (alarme não bloqueia)
-      - conditions:
-          - condition: trigger
-            id: [presence_on, test_trigger]
-          - condition: or
-            conditions:
-              # Gatilho de teste pula a checagem de lux/condição manual
-              - condition: trigger
-                id: test_trigger
-              - condition: and
-                conditions:
-                  - condition: and
-                    conditions: !input manual_condition
-                  - condition: or
-                    conditions:
-                      - condition: time
-                        after: !input lux_ignore_start
-                        before: !input lux_ignore_end
-                      - condition: numeric_state
-                        entity_id: !input illuminance_sensor
-                        below: !input lux_threshold
+                    value_template: "{{ not turn_on_home }}"
         sequence:
           - if:
               # NOITE -> SEMPRE a principal, auxiliar nunca atua
