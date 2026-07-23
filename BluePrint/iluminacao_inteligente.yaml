@@ -113,12 +113,6 @@ blueprint:
       icon: mdi:theme-light-dark
       collapsed: true
       input:
-        day_start:
-          name: Início do período Dia
-          selector:
-            time: {}
-          default: "08:00:00"
-
         night_start:
           name: Início do período Noite
           selector:
@@ -274,6 +268,40 @@ blueprint:
               mode: slider
           default: 5
 
+        alarm_home_use_rgb:
+          name: Usar cor RGB (em vez de temperatura de cor)?
+          description: >
+            Se SIM: usa a paleta de cor literal definida em "Cor quando
+            Alarme = Home" abaixo. Se NÃO: usa a "Temperatura de Cor quando
+            Alarme = Home" (quente/fria) no lugar. Nunca usa os dois ao
+            mesmo tempo.
+          selector:
+            boolean: {}
+          default: true
+
+        alarm_home_color:
+          name: Cor quando Alarme = Home (se "Usar cor RGB?" = SIM)
+          description: >
+            Só usado se "Ligar com alarme Home?" = NÃO, a lâmpada FOR
+            dimerizável, e "Usar cor RGB?" = SIM. Escolha a cor literal
+            (ex: um vermelho escuro, pra não incomodar a visão noturna).
+          selector:
+            color_rgb: {}
+          default: [255, 30, 0]
+
+        alarm_home_color_temp:
+          name: Temperatura de Cor quando Alarme = Home, em Kelvin (se "Usar cor RGB?" = NÃO)
+          description: >
+            Só usado se "Ligar com alarme Home?" = NÃO, a lâmpada FOR
+            dimerizável, e "Usar cor RGB?" = NÃO.
+          selector:
+            number:
+              min: 2000
+              max: 6500
+              unit_of_measurement: "K"
+              mode: slider
+          default: 2000
+
         alarm_home_alt_light:
           name: Luz Alternativa quando Alarme = Home
           description: >
@@ -303,6 +331,32 @@ blueprint:
             condition: {}
           default: []
 
+    test_section:
+      name: "🧪 Botão de Teste"
+      description: >
+        Opcional. Crie um "Ajudante" do tipo Botão (input_button) em
+        Configurações > Dispositivos e Serviços > Ajudantes, e selecione ele
+        aqui. Ao apertar o botão, a automação roda como se a presença
+        tivesse acabado de ser detectada - pula a checagem de luminosidade e
+        de Condição Manual (pra sempre mostrar resultado, mesmo de dia
+        claro), mas respeita o alarme e o mosquito de verdade, pra você ver
+        o comportamento real daquele momento. O botão não desliga a luz -
+        isso continua sendo só a presença sumindo.
+      icon: mdi:test-tube
+      collapsed: true
+      input:
+        test_button:
+          name: Botão de Teste (input_button)
+          description: >
+            OPCIONAL. Crie um Ajudante do tipo Botão em Configurações >
+            Dispositivos e Serviços > Ajudantes, e selecione ele aqui. Deixe
+            o padrão (uma entidade que não existe de verdade) se não quiser
+            usar essa função - assim o gatilho nunca dispara.
+          selector:
+            entity:
+              domain: input_button
+          default: "input_button.nenhum_teste_configurado"
+
 mode: restart
 max_exceeded: silent
 
@@ -310,6 +364,7 @@ variables:
   alt_light: !input alarm_home_alt_light
   is_dimmable: !input is_dimmable
   turn_on_home: !input turn_on_with_alarm_home
+  alarm_home_use_rgb: !input alarm_home_use_rgb
   use_aux_light: !input use_aux_light
   aux_light_only: !input aux_light_only
   aux_light_entity: !input aux_light
@@ -322,6 +377,9 @@ trigger:
     entity_id: !input presence_sensor
     to: "on"
     id: presence_on
+  - platform: state
+    entity_id: !input test_button
+    id: test_trigger
   - platform: state
     entity_id: !input presence_sensor
     to: "off"
@@ -340,38 +398,45 @@ action:
           - condition: trigger
             id: presence_off
         sequence:
-          - service: light.turn_off
+          - service: homeassistant.turn_off
             target:
               entity_id: !input light_target
           - if:
               - condition: template
                 value_template: "{{ alt_light not in ['', None] }}"
             then:
-              - service: light.turn_off
+              - service: homeassistant.turn_off
                 target:
                   entity_id: "{{ alt_light }}"
           - if:
               - condition: template
                 value_template: "{{ use_aux_light and aux_light_entity not in ['', None] }}"
             then:
-              - service: light.turn_off
+              - service: homeassistant.turn_off
                 target:
                   entity_id: "{{ aux_light_entity }}"
 
       # 2) Alarme = Home e bloqueio ativado -> modo alternativo
       - conditions:
           - condition: trigger
-            id: presence_on
-          - condition: and
-            conditions: !input manual_condition
+            id: [presence_on, test_trigger]
           - condition: or
             conditions:
-              - condition: time
-                after: !input lux_ignore_start
-                before: !input lux_ignore_end
-              - condition: numeric_state
-                entity_id: !input illuminance_sensor
-                below: !input lux_threshold
+              # Gatilho de teste pula a checagem de lux/condição manual
+              - condition: trigger
+                id: test_trigger
+              - condition: and
+                conditions:
+                  - condition: and
+                    conditions: !input manual_condition
+                  - condition: or
+                    conditions:
+                      - condition: time
+                        after: !input lux_ignore_start
+                        before: !input lux_ignore_end
+                      - condition: numeric_state
+                        entity_id: !input illuminance_sensor
+                        below: !input lux_threshold
           - condition: state
             entity_id: !input alarm_entity
             state: "armed_home"
@@ -382,34 +447,53 @@ action:
               - condition: template
                 value_template: "{{ is_dimmable }}"
             then:
-              - service: light.turn_on
-                target:
-                  entity_id: !input light_target
-                data:
-                  brightness_pct: !input alarm_home_dimmer_level
+              - if:
+                  - condition: template
+                    value_template: "{{ alarm_home_use_rgb }}"
+                then:
+                  - service: homeassistant.turn_on
+                    target:
+                      entity_id: !input light_target
+                    data:
+                      brightness_pct: !input alarm_home_dimmer_level
+                      rgb_color: !input alarm_home_color
+                else:
+                  - service: homeassistant.turn_on
+                    target:
+                      entity_id: !input light_target
+                    data:
+                      brightness_pct: !input alarm_home_dimmer_level
+                      color_temp_kelvin: !input alarm_home_color_temp
             else:
               - if:
                   - condition: template
                     value_template: "{{ alt_light not in ['', None] }}"
                 then:
-                  - service: light.turn_on
+                  - service: homeassistant.turn_on
                     target:
                       entity_id: "{{ alt_light }}"
 
       # 3) Comportamento normal (alarme não bloqueia)
       - conditions:
           - condition: trigger
-            id: presence_on
-          - condition: and
-            conditions: !input manual_condition
+            id: [presence_on, test_trigger]
           - condition: or
             conditions:
-              - condition: time
-                after: !input lux_ignore_start
-                before: !input lux_ignore_end
-              - condition: numeric_state
-                entity_id: !input illuminance_sensor
-                below: !input lux_threshold
+              # Gatilho de teste pula a checagem de lux/condição manual
+              - condition: trigger
+                id: test_trigger
+              - condition: and
+                conditions:
+                  - condition: and
+                    conditions: !input manual_condition
+                  - condition: or
+                    conditions:
+                      - condition: time
+                        after: !input lux_ignore_start
+                        before: !input lux_ignore_end
+                      - condition: numeric_state
+                        entity_id: !input illuminance_sensor
+                        below: !input lux_threshold
         sequence:
           - if:
               # NOITE -> SEMPRE a principal, auxiliar nunca atua
@@ -421,7 +505,7 @@ action:
                   - condition: template
                     value_template: "{{ use_aux_light and aux_light_entity not in ['', None] }}"
                 then:
-                  - service: light.turn_off
+                  - service: homeassistant.turn_off
                     target:
                       entity_id: "{{ aux_light_entity }}"
               - if:
@@ -432,7 +516,7 @@ action:
                       - condition: template
                         value_template: "{{ is_dimmable }}"
                     then:
-                      - service: light.turn_on
+                      - service: homeassistant.turn_on
                         target:
                           entity_id: !input light_target
                         data:
@@ -443,14 +527,14 @@ action:
                       - condition: template
                         value_template: "{{ is_dimmable }}"
                     then:
-                      - service: light.turn_on
+                      - service: homeassistant.turn_on
                         target:
                           entity_id: !input light_target
                         data:
                           brightness_pct: !input night_brightness
                           color_temp_kelvin: !input night_color_temp
                     else:
-                      - service: light.turn_on
+                      - service: homeassistant.turn_on
                         target:
                           entity_id: !input light_target
             else:
@@ -464,7 +548,7 @@ action:
                       - condition: template
                         value_template: "{{ aux_light_only }}"
                     then:
-                      - service: light.turn_off
+                      - service: homeassistant.turn_off
                         target:
                           entity_id: !input light_target
                       - if:
@@ -475,7 +559,7 @@ action:
                               - condition: template
                                 value_template: "{{ aux_is_dimmable }}"
                             then:
-                              - service: light.turn_on
+                              - service: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                                 data:
@@ -486,14 +570,14 @@ action:
                               - condition: template
                                 value_template: "{{ aux_is_dimmable }}"
                             then:
-                              - service: light.turn_on
+                              - service: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                                 data:
                                   brightness_pct: 100
                                   color_temp_kelvin: !input day_color_temp
                             else:
-                              - service: light.turn_on
+                              - service: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                     else:
@@ -506,7 +590,7 @@ action:
                               - condition: template
                                 value_template: "{{ is_dimmable }}"
                             then:
-                              - service: light.turn_on
+                              - service: homeassistant.turn_on
                                 target:
                                   entity_id: !input light_target
                                 data:
@@ -516,7 +600,7 @@ action:
                               - condition: template
                                 value_template: "{{ aux_is_dimmable }}"
                             then:
-                              - service: light.turn_on
+                              - service: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                                 data:
@@ -527,28 +611,28 @@ action:
                               - condition: template
                                 value_template: "{{ is_dimmable }}"
                             then:
-                              - service: light.turn_on
+                              - service: homeassistant.turn_on
                                 target:
                                   entity_id: !input light_target
                                 data:
                                   brightness_pct: 100
                                   color_temp_kelvin: !input day_color_temp
                             else:
-                              - service: light.turn_on
+                              - service: homeassistant.turn_on
                                 target:
                                   entity_id: !input light_target
                           - if:
                               - condition: template
                                 value_template: "{{ aux_is_dimmable }}"
                             then:
-                              - service: light.turn_on
+                              - service: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                                 data:
                                   brightness_pct: 100
                                   color_temp_kelvin: !input day_color_temp
                             else:
-                              - service: light.turn_on
+                              - service: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                 else:
@@ -561,7 +645,7 @@ action:
                           - condition: template
                             value_template: "{{ is_dimmable }}"
                         then:
-                          - service: light.turn_on
+                          - service: homeassistant.turn_on
                             target:
                               entity_id: !input light_target
                             data:
@@ -572,13 +656,13 @@ action:
                           - condition: template
                             value_template: "{{ is_dimmable }}"
                         then:
-                          - service: light.turn_on
+                          - service: homeassistant.turn_on
                             target:
                               entity_id: !input light_target
                             data:
                               brightness_pct: 100
                               color_temp_kelvin: !input day_color_temp
                         else:
-                          - service: light.turn_on
+                          - service: homeassistant.turn_on
                             target:
                               entity_id: !input light_target
