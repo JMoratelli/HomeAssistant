@@ -514,9 +514,6 @@ action:
                       - condition: template
                         value_template: "{{ aux_light_only }}"
                     then:
-                      - service: homeassistant.turn_off
-                        target:
-                          entity_id: !input light_target
                       - if:
                           - condition: template
                             value_template: "{{ mosquito_active }}"
@@ -525,13 +522,41 @@ action:
                               - condition: template
                                 value_template: "{{ aux_is_dimmable }}"
                             then:
+                              # Auxiliar consegue mostrar a cor do mosquito
+                              - service: homeassistant.turn_off
+                                target:
+                                  entity_id: !input light_target
                               - service: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                                 data:
                                   brightness_pct: !input mosquito_brightness
                                   color_temp_kelvin: !input mosquito_color_temp
+                            else:
+                              # Auxiliar não dá conta -> principal assume o mosquito,
+                              # mesmo em modo "somente auxiliar"
+                              - service: homeassistant.turn_off
+                                target:
+                                  entity_id: "{{ aux_light_entity }}"
+                              - if:
+                                  - condition: template
+                                    value_template: "{{ is_dimmable }}"
+                                then:
+                                  - service: homeassistant.turn_on
+                                    target:
+                                      entity_id: !input light_target
+                                    data:
+                                      brightness_pct: !input mosquito_brightness
+                                      color_temp_kelvin: !input mosquito_color_temp
+                                else:
+                                  - service: homeassistant.turn_on
+                                    target:
+                                      entity_id: !input light_target
                         else:
+                          # Sem mosquito -> comportamento normal do dia (somente auxiliar)
+                          - service: homeassistant.turn_off
+                            target:
+                              entity_id: !input light_target
                           - if:
                               - condition: template
                                 value_template: "{{ aux_is_dimmable }}"
