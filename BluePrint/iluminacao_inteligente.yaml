@@ -250,11 +250,24 @@ blueprint:
           name: Ligar por movimento com alarme em "Home"?
           description: >
             Se NÃO: quando o alarme estiver em "Home", a luz não liga
-            normalmente por presença. Em vez disso, usa o modo alternativo
-            definido abaixo (dimmer fixo ou luz alternativa).
+            normalmente por presença - em vez disso, olha o campo abaixo
+            ("Não fazer nada") pra decidir entre ficar totalmente apagada ou
+            usar um modo reduzido.
           selector:
             boolean: {}
           default: true
+
+        alarm_home_full_block:
+          name: Não fazer nada quando bloqueado (em vez de modo reduzido)?
+          description: >
+            Só tem efeito se "Ligar com alarme Home?" = NÃO. Se SIM: a luz
+            NÃO acende de jeito nenhum quando o alarme está em Home - nem no
+            modo reduzido abaixo. Ideal pro quarto, pra não acordar
+            ninguém. Se NÃO (padrão): usa o modo reduzido (dimmer/cor fixos,
+            ou luz alternativa) definido nos campos abaixo.
+          selector:
+            boolean: {}
+          default: false
 
         alarm_home_dimmer_level:
           name: Brilho quando Alarme = Home (%)
@@ -364,6 +377,7 @@ variables:
   alt_light: !input alarm_home_alt_light
   is_dimmable: !input is_dimmable
   turn_on_home: !input turn_on_with_alarm_home
+  alarm_home_full_block: !input alarm_home_full_block
   alarm_home_use_rgb: !input alarm_home_use_rgb
   use_aux_light: !input use_aux_light
   aux_light_only: !input aux_light_only
@@ -445,33 +459,37 @@ action:
         sequence:
           - if:
               - condition: template
-                value_template: "{{ is_dimmable }}"
+                value_template: "{{ not alarm_home_full_block }}"
             then:
               - if:
                   - condition: template
-                    value_template: "{{ alarm_home_use_rgb }}"
+                    value_template: "{{ is_dimmable }}"
                 then:
-                  - service: homeassistant.turn_on
-                    target:
-                      entity_id: !input light_target
-                    data:
-                      brightness_pct: !input alarm_home_dimmer_level
-                      rgb_color: !input alarm_home_color
+                  - if:
+                      - condition: template
+                        value_template: "{{ alarm_home_use_rgb }}"
+                    then:
+                      - service: homeassistant.turn_on
+                        target:
+                          entity_id: !input light_target
+                        data:
+                          brightness_pct: !input alarm_home_dimmer_level
+                          rgb_color: !input alarm_home_color
+                    else:
+                      - service: homeassistant.turn_on
+                        target:
+                          entity_id: !input light_target
+                        data:
+                          brightness_pct: !input alarm_home_dimmer_level
+                          color_temp_kelvin: !input alarm_home_color_temp
                 else:
-                  - service: homeassistant.turn_on
-                    target:
-                      entity_id: !input light_target
-                    data:
-                      brightness_pct: !input alarm_home_dimmer_level
-                      color_temp_kelvin: !input alarm_home_color_temp
-            else:
-              - if:
-                  - condition: template
-                    value_template: "{{ alt_light not in ['', None] }}"
-                then:
-                  - service: homeassistant.turn_on
-                    target:
-                      entity_id: "{{ alt_light }}"
+                  - if:
+                      - condition: template
+                        value_template: "{{ alt_light not in ['', None] }}"
+                    then:
+                      - service: homeassistant.turn_on
+                        target:
+                          entity_id: "{{ alt_light }}"
 
       # 3) Comportamento normal (alarme não bloqueia)
       - conditions:
