@@ -300,7 +300,7 @@ blueprint:
             (ex: um vermelho escuro, pra não incomodar a visão noturna).
           selector:
             color_rgb: {}
-          default: [255, 30, 0]
+          default: [255, 255, 0]
 
         alarm_home_color_temp:
           name: Temperatura de Cor quando Alarme = Home, em Kelvin (se "Usar cor RGB?" = NÃO)
