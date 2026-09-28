@@ -6,11 +6,14 @@ blueprint:
     (junto ou substituindo a principal), período Noite sempre com a lâmpada
     principal, modo "excesso de mosquitos", modo especial quando o alarme
     está em "Home" (dimmer/cor reduzidos, ou nada), janela de horário que
-    ignora o sensor de luminosidade, e uma condição manual avançada opcional.
+    ignora o sensor de luminosidade, acendimento quando escurece com alguém
+    já no ambiente, troca de modo na virada Dia/Noite, transição suave nas
+    lâmpadas dimerizáveis, e uma condição manual avançada opcional.
 
     Prioridade das regras (da mais alta para a mais baixa):
-      1) Alarme em "Home" -> sobrepõe TUDO: ou liga no modo reduzido
-         configurado abaixo, ou não liga nada (conforme o toggle)
+      1) Alarme em "Home" -> sobrepõe TUDO, inclusive a Condição Manual: ou
+         liga no modo reduzido configurado abaixo, ou não liga nada
+         (conforme o toggle)
       2) Condição Manual (se configurada) precisa passar, senão nada acontece
       3) Modo mosquito ativo -> sobrescreve cor/brilho na(s) lâmpada(s) que
          estiverem ativas no momento
@@ -20,10 +23,17 @@ blueprint:
       6) Lâmpada não dimerizável (a que estiver ativa no momento) -> apenas
          liga/desliga, sem cor
 
+    A luz ACENDE quando o sensor de presença detecta alguém, ou (opcional)
+    quando escurece com alguém já no ambiente. Na virada Dia/Noite, a luz
+    que já estiver acesa muda para o modo do novo período (opcional) - a
+    virada nunca acende luz apagada.
+
     O gatilho de DESLIGAR é sempre e somente a ausência de presença pelo tempo
     configurado - não existe nenhum outro gatilho "enquanto" rodando por trás.
 
   domain: automation
+  homeassistant:
+    min_version: 2024.10.0
 
   input:
     presence_sensor:
@@ -106,6 +116,69 @@ blueprint:
           mode: box
       default: 120
 
+    transition_time:
+      name: Tempo de transição (segundos)
+      description: >
+        Tempo que as lâmpadas dimerizáveis levam pra acender, apagar ou mudar
+        de brilho/cor (efeito "fade"). 0 = instantâneo. Lâmpadas não
+        dimerizáveis ignoram isso.
+      selector:
+        number:
+          min: 0
+          max: 60
+          step: 0.5
+          unit_of_measurement: "s"
+          mode: box
+      default: 1
+
+    dark_section:
+      name: "🌆 Acender ao Escurecer (com alguém no ambiente)"
+      description: >
+        Sem isso, a luz só acende no instante em que o sensor de presença
+        detecta alguém. Se a pessoa já está no ambiente há horas (presença
+        ligada direto) e o dia escurece, nada acontece. Com isso ativo, quando
+        a luminosidade cai abaixo do limite e fica assim pelo tempo
+        configurado, a luz acende seguindo as mesmas regras de sempre
+        (alarme, condição manual, dia/noite, mosquito).
+      icon: mdi:weather-sunset-down
+      collapsed: true
+      input:
+        turn_on_when_dark:
+          name: Acender quando escurecer com alguém no ambiente?
+          selector:
+            boolean: {}
+          default: true
+
+        dark_delay:
+          name: Tempo abaixo do limite antes de acender (segundos)
+          description: >
+            A luminosidade precisa ficar abaixo do limite por esse tempo.
+            Evita acender por causa de uma nuvem ou de alguém passando na
+            frente do sensor.
+          selector:
+            number:
+              min: 0
+              max: 1800
+              unit_of_measurement: "s"
+              mode: box
+          default: 60
+
+        manual_off_guard:
+          name: Não reacender se as luzes foram apagadas há menos de (minutos)
+          description: >
+            Quando alguém apaga a luz na mão, a luminosidade despenca e isso
+            parece "escureceu". Se as luzes foram apagadas há menos tempo que
+            isso, o acendimento por escurecer é ignorado - assim a luz do
+            quarto não volta sozinha depois que você apaga pra dormir. (Na
+            prática, sempre espera pelo menos o tempo acima + 1 minuto.)
+          selector:
+            number:
+              min: 1
+              max: 240
+              unit_of_measurement: "min"
+              mode: box
+          default: 10
+
     periodo_section:
       name: "🌗 Períodos Dia / Noite"
       description: >
@@ -125,6 +198,18 @@ blueprint:
           selector:
             time: {}
           default: "07:00:00"
+
+        period_switch:
+          name: Mudar o modo na virada Dia/Noite se a luz estiver acesa?
+          description: >
+            Se SIM: no início e no fim da Noite, se alguma luz dessa automação
+            estiver acesa, ela já muda pro modo do novo período (ex.: no
+            início da Noite a principal vai pro brilho/cor da Noite e a
+            auxiliar apaga). Nunca acende luz que está apagada. Se NÃO: o
+            modo só muda quando a luz acender de novo.
+          selector:
+            boolean: {}
+          default: true
 
         day_color_temp:
           name: Temperatura de cor - Dia (quente, em Kelvin)
@@ -247,8 +332,9 @@ blueprint:
       name: "🚨 Comportamento com Alarme = Home"
       description: >
         Essa seção inteira só entra em ação quando o alarme está em "Home".
-        Nesse caso, ela sobrepõe QUALQUER outra regra (dia/noite/mosquito).
-        Fora do estado "Home", o alarme não interfere em nada.
+        Nesse caso, ela sobrepõe QUALQUER outra regra (dia/noite/mosquito e
+        a Condição Manual). Fora do estado "Home", o alarme não interfere em
+        nada.
       icon: mdi:shield-home
       collapsed: true
       input:
@@ -312,7 +398,10 @@ blueprint:
           name: Luz Alternativa quando Alarme = Home
           description: >
             OPCIONAL. Só usado se "Ligar com alarme Home?" = SIM e a lâmpada
-            NÃO for dimerizável. Deixe em branco se a lâmpada principal for dimerizável.
+            NÃO for dimerizável. Deixe em branco se a lâmpada principal for
+            dimerizável. Se a principal NÃO for dimerizável e isto ficar em
+            branco, com alarme em Home o movimento não acende nada - de
+            propósito.
           selector:
             entity:
               filter:
@@ -342,6 +431,7 @@ mode: restart
 max_exceeded: silent
 
 variables:
+  main_light: !input light_target
   is_dimmable: !input is_dimmable
   turn_on_home: !input turn_on_with_alarm_home
   alarm_home_use_rgb: !input alarm_home_use_rgb
@@ -352,22 +442,85 @@ variables:
   aux_is_dimmable: !input aux_light_is_dimmable
   mosquito_entity: !input mosquito_boolean
   mosquito_active: "{{ is_state(mosquito_entity, 'on') }}"
+  turn_on_when_dark: !input turn_on_when_dark
+  dark_delay: !input dark_delay
+  manual_off_guard: !input manual_off_guard
+  period_switch: !input period_switch
+  transition_time: !input transition_time
+  # Todas as luzes que essa automação acende/apaga
+  managed_lights: >
+    {{ [main_light]
+       + ([aux_light_entity] if use_aux_light and aux_light_entity not in ['', None] else [])
+       + ([alt_light] if alt_light not in ['', None] else []) }}
+  # Dados pra apagar: dimerizável apaga com fade, não dimerizável só desliga
+  main_off_data: "{{ {'transition': transition_time} if is_dimmable else {} }}"
+  aux_off_data: "{{ {'transition': transition_time} if aux_is_dimmable else {} }}"
 
-trigger:
-  - platform: state
+triggers:
+  - trigger: state
     entity_id: !input presence_sensor
     to: "on"
     id: presence_on
-  - platform: state
+  - trigger: state
     entity_id: !input presence_sensor
     to: "off"
     for:
       seconds: !input presence_clear_delay
     id: presence_off
+  - trigger: numeric_state
+    entity_id: !input illuminance_sensor
+    below: !input lux_threshold
+    for:
+      seconds: !input dark_delay
+    id: got_dark
+  - trigger: time
+    at:
+      - !input night_start
+      - !input night_end
+    id: period_change
 
-condition: []
+conditions:
+  # O gatilho "escureceu" só vale se a opção estiver ativa, se tem alguém no
+  # ambiente e se as luzes estão todas apagadas há um tempo - senão, apagar a
+  # luz na mão já derrubaria a luminosidade e ela acenderia de novo sozinha
+  - condition: or
+    conditions:
+      - condition: not
+        conditions:
+          - condition: trigger
+            id: got_dark
+      - condition: and
+        conditions:
+          - condition: template
+            value_template: "{{ turn_on_when_dark }}"
+          - condition: state
+            entity_id: !input presence_sensor
+            state: "on"
+          - condition: template
+            value_template: >
+              {% set luzes = expand(managed_lights) %}
+              {% set espera = [manual_off_guard * 60, dark_delay + 60] | max %}
+              {{ luzes | count > 0
+                 and luzes | selectattr('state', 'eq', 'on') | list | count == 0
+                 and (luzes | map(attribute='last_changed') | max)
+                     < now() - timedelta(seconds=espera) }}
+  # A virada Dia/Noite só ajusta luz que JÁ está acesa, nunca acende do nada
+  - condition: or
+    conditions:
+      - condition: not
+        conditions:
+          - condition: trigger
+            id: period_change
+      - condition: and
+        conditions:
+          - condition: template
+            value_template: "{{ period_switch }}"
+          - condition: template
+            value_template: >
+              {{ expand(managed_lights) | selectattr('state', 'eq', 'on')
+                 | list | count > 0 }}
 
-action:
+actions:
   - choose:
       # 1) Presença sumiu -> apaga tudo (principal, alternativa e auxiliar, se houver)
       # Esse é o ÚNICO gatilho de desligamento que existe: sempre o "off" do
@@ -376,32 +529,40 @@ action:
           - condition: trigger
             id: presence_off
         sequence:
-          - service: homeassistant.turn_off
+          - action: homeassistant.turn_off
             target:
               entity_id: !input light_target
+            data: "{{ main_off_data }}"
           - if:
               - condition: template
                 value_template: "{{ alt_light not in ['', None] }}"
             then:
-              - service: homeassistant.turn_off
+              - action: homeassistant.turn_off
                 target:
                   entity_id: "{{ alt_light }}"
           - if:
               - condition: template
                 value_template: "{{ use_aux_light and aux_light_entity not in ['', None] }}"
             then:
-              - service: homeassistant.turn_off
+              - action: homeassistant.turn_off
                 target:
                   entity_id: "{{ aux_light_entity }}"
+                data: "{{ aux_off_data }}"
 
-      # 2) Alarme = Home -> sobrepõe tudo: modo reduzido, ou nada
+      # 2) Alarme = Home -> sobrepõe tudo, inclusive a Condição Manual:
+      # modo reduzido, ou nada
       - conditions:
           - condition: trigger
-            id: presence_on
-          - condition: and
-            conditions: !input manual_condition
+            id:
+              - presence_on
+              - got_dark
+              - period_change
           - condition: or
             conditions:
+              # Na virada Dia/Noite a luz já está acesa, então o sensor de lux
+              # só mede a própria lâmpada - não faz sentido checar
+              - condition: trigger
+                id: period_change
               - condition: time
                 after: !input lux_ignore_start
                 before: !input lux_ignore_end
@@ -424,36 +585,52 @@ action:
                       - condition: template
                         value_template: "{{ alarm_home_use_rgb }}"
                     then:
-                      - service: homeassistant.turn_on
+                      - action: homeassistant.turn_on
                         target:
                           entity_id: !input light_target
                         data:
                           brightness_pct: !input alarm_home_dimmer_level
                           rgb_color: !input alarm_home_color
+                          transition: !input transition_time
                     else:
-                      - service: homeassistant.turn_on
+                      - action: homeassistant.turn_on
                         target:
                           entity_id: !input light_target
                         data:
                           brightness_pct: !input alarm_home_dimmer_level
                           color_temp_kelvin: !input alarm_home_color_temp
+                          transition: !input transition_time
                 else:
+                  # Principal NÃO dimerizável -> acende a Luz Alternativa no
+                  # lugar. Sem Luz Alternativa configurada, NÃO acende nada:
+                  # é de propósito, não é esquecimento.
                   - if:
                       - condition: template
                         value_template: "{{ alt_light not in ['', None] }}"
                     then:
-                      - service: homeassistant.turn_on
+                      - action: homeassistant.turn_on
                         target:
                           entity_id: "{{ alt_light }}"
 
       # 3) Comportamento normal (alarme NÃO está em Home)
       - conditions:
           - condition: trigger
-            id: presence_on
+            id:
+              - presence_on
+              - got_dark
+              - period_change
+          - condition: not
+            conditions:
+              - condition: state
+                entity_id: !input alarm_entity
+                state: "armed_home"
           - condition: and
             conditions: !input manual_condition
           - condition: or
             conditions:
+              # Mesma regra do ramo 2: na virada, a luz já está acesa
+              - condition: trigger
+                id: period_change
               - condition: time
                 after: !input lux_ignore_start
                 before: !input lux_ignore_end
@@ -461,6 +638,11 @@ action:
                 entity_id: !input illuminance_sensor
                 below: !input lux_threshold
         sequence:
+          # Na troca entre lâmpadas, sempre acende a nova ANTES de apagar a
+          # outra - apagando primeiro, o ambiente ficava um instante no escuro.
+          # Modo mosquito: lâmpada NÃO dimerizável não acende, de propósito -
+          # exceto no "somente auxiliar" com auxiliar não dimerizável, onde a
+          # principal assume.
           - if:
               # NOITE -> SEMPRE a principal, auxiliar nunca atua
               - condition: time
@@ -469,40 +651,43 @@ action:
             then:
               - if:
                   - condition: template
-                    value_template: "{{ use_aux_light and aux_light_entity not in ['', None] }}"
-                then:
-                  - service: homeassistant.turn_off
-                    target:
-                      entity_id: "{{ aux_light_entity }}"
-              - if:
-                  - condition: template
                     value_template: "{{ mosquito_active }}"
                 then:
                   - if:
                       - condition: template
                         value_template: "{{ is_dimmable }}"
                     then:
-                      - service: homeassistant.turn_on
+                      - action: homeassistant.turn_on
                         target:
                           entity_id: !input light_target
                         data:
                           brightness_pct: !input mosquito_brightness
                           color_temp_kelvin: !input mosquito_color_temp
+                          transition: !input transition_time
                 else:
                   - if:
                       - condition: template
                         value_template: "{{ is_dimmable }}"
                     then:
-                      - service: homeassistant.turn_on
+                      - action: homeassistant.turn_on
                         target:
                           entity_id: !input light_target
                         data:
                           brightness_pct: !input night_brightness
                           color_temp_kelvin: !input night_color_temp
+                          transition: !input transition_time
                     else:
-                      - service: homeassistant.turn_on
+                      - action: homeassistant.turn_on
                         target:
                           entity_id: !input light_target
+              - if:
+                  - condition: template
+                    value_template: "{{ use_aux_light and aux_light_entity not in ['', None] }}"
+                then:
+                  - action: homeassistant.turn_off
+                    target:
+                      entity_id: "{{ aux_light_entity }}"
+                    data: "{{ aux_off_data }}"
             else:
               # DIA
               - if:
@@ -523,54 +708,60 @@ action:
                                 value_template: "{{ aux_is_dimmable }}"
                             then:
                               # Auxiliar consegue mostrar a cor do mosquito
-                              - service: homeassistant.turn_off
-                                target:
-                                  entity_id: !input light_target
-                              - service: homeassistant.turn_on
+                              - action: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                                 data:
                                   brightness_pct: !input mosquito_brightness
                                   color_temp_kelvin: !input mosquito_color_temp
+                                  transition: !input transition_time
+                              - action: homeassistant.turn_off
+                                target:
+                                  entity_id: !input light_target
+                                data: "{{ main_off_data }}"
                             else:
                               # Auxiliar não dá conta -> principal assume o mosquito,
                               # mesmo em modo "somente auxiliar"
-                              - service: homeassistant.turn_off
-                                target:
-                                  entity_id: "{{ aux_light_entity }}"
                               - if:
                                   - condition: template
                                     value_template: "{{ is_dimmable }}"
                                 then:
-                                  - service: homeassistant.turn_on
+                                  - action: homeassistant.turn_on
                                     target:
                                       entity_id: !input light_target
                                     data:
                                       brightness_pct: !input mosquito_brightness
                                       color_temp_kelvin: !input mosquito_color_temp
+                                      transition: !input transition_time
                                 else:
-                                  - service: homeassistant.turn_on
+                                  - action: homeassistant.turn_on
                                     target:
                                       entity_id: !input light_target
+                              - action: homeassistant.turn_off
+                                target:
+                                  entity_id: "{{ aux_light_entity }}"
+                                data: "{{ aux_off_data }}"
                         else:
                           # Sem mosquito -> comportamento normal do dia (somente auxiliar)
-                          - service: homeassistant.turn_off
-                            target:
-                              entity_id: !input light_target
                           - if:
                               - condition: template
                                 value_template: "{{ aux_is_dimmable }}"
                             then:
-                              - service: homeassistant.turn_on
+                              - action: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                                 data:
                                   brightness_pct: 100
                                   color_temp_kelvin: !input day_color_temp
+                                  transition: !input transition_time
                             else:
-                              - service: homeassistant.turn_on
+                              - action: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
+                          - action: homeassistant.turn_off
+                            target:
+                              entity_id: !input light_target
+                            data: "{{ main_off_data }}"
                     else:
                       # Principal + auxiliar juntas
                       - if:
@@ -581,49 +772,53 @@ action:
                               - condition: template
                                 value_template: "{{ is_dimmable }}"
                             then:
-                              - service: homeassistant.turn_on
+                              - action: homeassistant.turn_on
                                 target:
                                   entity_id: !input light_target
                                 data:
                                   brightness_pct: !input mosquito_brightness
                                   color_temp_kelvin: !input mosquito_color_temp
+                                  transition: !input transition_time
                           - if:
                               - condition: template
                                 value_template: "{{ aux_is_dimmable }}"
                             then:
-                              - service: homeassistant.turn_on
+                              - action: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                                 data:
                                   brightness_pct: !input mosquito_brightness
                                   color_temp_kelvin: !input mosquito_color_temp
+                                  transition: !input transition_time
                         else:
                           - if:
                               - condition: template
                                 value_template: "{{ is_dimmable }}"
                             then:
-                              - service: homeassistant.turn_on
+                              - action: homeassistant.turn_on
                                 target:
                                   entity_id: !input light_target
                                 data:
                                   brightness_pct: 100
                                   color_temp_kelvin: !input day_color_temp
+                                  transition: !input transition_time
                             else:
-                              - service: homeassistant.turn_on
+                              - action: homeassistant.turn_on
                                 target:
                                   entity_id: !input light_target
                           - if:
                               - condition: template
                                 value_template: "{{ aux_is_dimmable }}"
                             then:
-                              - service: homeassistant.turn_on
+                              - action: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                                 data:
                                   brightness_pct: 100
                                   color_temp_kelvin: !input day_color_temp
+                                  transition: !input transition_time
                             else:
-                              - service: homeassistant.turn_on
+                              - action: homeassistant.turn_on
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
                 else:
@@ -636,24 +831,26 @@ action:
                           - condition: template
                             value_template: "{{ is_dimmable }}"
                         then:
-                          - service: homeassistant.turn_on
+                          - action: homeassistant.turn_on
                             target:
                               entity_id: !input light_target
                             data:
                               brightness_pct: !input mosquito_brightness
                               color_temp_kelvin: !input mosquito_color_temp
+                              transition: !input transition_time
                     else:
                       - if:
                           - condition: template
                             value_template: "{{ is_dimmable }}"
                         then:
-                          - service: homeassistant.turn_on
+                          - action: homeassistant.turn_on
                             target:
                               entity_id: !input light_target
                             data:
                               brightness_pct: 100
                               color_temp_kelvin: !input day_color_temp
+                              transition: !input transition_time
                         else:
-                          - service: homeassistant.turn_on
+                          - action: homeassistant.turn_on
                             target:
                               entity_id: !input light_target
