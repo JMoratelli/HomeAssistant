@@ -14,5 +14,3 @@
   desatualizada.
 - `ESPHome/athom-presence-sensor-v3.yaml` está vazio (só o arquivo foi
   criado).
-- `.github/workflows/blank.yml` não tem relação com o Home Assistant: compila
-  a `softcam.dll` num runner Windows e roda a cada push.
