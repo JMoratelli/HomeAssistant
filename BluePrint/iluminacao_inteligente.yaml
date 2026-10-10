@@ -7,8 +7,8 @@ blueprint:
     principal, modo "excesso de mosquitos", modo especial quando o alarme
     está em "Home" (dimmer/cor reduzidos, ou nada), janela de horário que
     ignora o sensor de luminosidade, acendimento quando escurece com alguém
-    já no ambiente, troca de modo na virada Dia/Noite, transição suave nas
-    lâmpadas dimerizáveis, e uma condição manual avançada opcional.
+    já no ambiente, troca de modo na virada Dia/Noite, e uma condição manual
+    avançada opcional.
 
     Prioridade das regras (da mais alta para a mais baixa):
       1) Alarme em "Home" -> sobrepõe TUDO, inclusive a Condição Manual: ou
@@ -115,21 +115,6 @@ blueprint:
           unit_of_measurement: "s"
           mode: box
       default: 120
-
-    transition_time:
-      name: Tempo de transição (segundos)
-      description: >
-        Tempo que as lâmpadas dimerizáveis levam pra acender, apagar ou mudar
-        de brilho/cor (efeito "fade"). 0 = instantâneo. Lâmpadas não
-        dimerizáveis ignoram isso.
-      selector:
-        number:
-          min: 0
-          max: 60
-          step: 0.5
-          unit_of_measurement: "s"
-          mode: box
-      default: 1
 
     dark_section:
       name: "🌆 Acender ao Escurecer (com alguém no ambiente)"
@@ -446,15 +431,11 @@ variables:
   dark_delay: !input dark_delay
   manual_off_guard: !input manual_off_guard
   period_switch: !input period_switch
-  transition_time: !input transition_time
   # Todas as luzes que essa automação acende/apaga
   managed_lights: >
     {{ [main_light]
        + ([aux_light_entity] if use_aux_light and aux_light_entity not in ['', None] else [])
        + ([alt_light] if alt_light not in ['', None] else []) }}
-  # Dados pra apagar: dimerizável apaga com fade, não dimerizável só desliga
-  main_off_data: "{{ {'transition': transition_time} if is_dimmable else {} }}"
-  aux_off_data: "{{ {'transition': transition_time} if aux_is_dimmable else {} }}"
 
 triggers:
   - trigger: state
@@ -521,6 +502,9 @@ conditions:
                  | list | count > 0 }}
 
 actions:
+  # Nenhum comando usa "transition" (fade), de propósito: em lâmpadas Zigbee
+  # ela fazia a luz acender e apagar sozinha logo em seguida, ou travar em 0%
+  # sem obedecer mais o comando de ligar.
   - choose:
       # 1) Presença sumiu -> apaga tudo (principal, alternativa e auxiliar, se houver)
       # Esse é o ÚNICO gatilho de desligamento que existe: sempre o "off" do
@@ -532,7 +516,6 @@ actions:
           - action: homeassistant.turn_off
             target:
               entity_id: !input light_target
-            data: "{{ main_off_data }}"
           - if:
               - condition: template
                 value_template: "{{ alt_light not in ['', None] }}"
@@ -547,7 +530,6 @@ actions:
               - action: homeassistant.turn_off
                 target:
                   entity_id: "{{ aux_light_entity }}"
-                data: "{{ aux_off_data }}"
 
       # 2) Alarme = Home -> sobrepõe tudo, inclusive a Condição Manual:
       # modo reduzido, ou nada
@@ -591,7 +573,6 @@ actions:
                         data:
                           brightness_pct: !input alarm_home_dimmer_level
                           rgb_color: !input alarm_home_color
-                          transition: !input transition_time
                     else:
                       - action: homeassistant.turn_on
                         target:
@@ -599,7 +580,6 @@ actions:
                         data:
                           brightness_pct: !input alarm_home_dimmer_level
                           color_temp_kelvin: !input alarm_home_color_temp
-                          transition: !input transition_time
                 else:
                   # Principal NÃO dimerizável -> acende a Luz Alternativa no
                   # lugar. Sem Luz Alternativa configurada, NÃO acende nada:
@@ -663,7 +643,6 @@ actions:
                         data:
                           brightness_pct: !input mosquito_brightness
                           color_temp_kelvin: !input mosquito_color_temp
-                          transition: !input transition_time
                 else:
                   - if:
                       - condition: template
@@ -675,7 +654,6 @@ actions:
                         data:
                           brightness_pct: !input night_brightness
                           color_temp_kelvin: !input night_color_temp
-                          transition: !input transition_time
                     else:
                       - action: homeassistant.turn_on
                         target:
@@ -687,7 +665,6 @@ actions:
                   - action: homeassistant.turn_off
                     target:
                       entity_id: "{{ aux_light_entity }}"
-                    data: "{{ aux_off_data }}"
             else:
               # DIA
               - if:
@@ -714,11 +691,9 @@ actions:
                                 data:
                                   brightness_pct: !input mosquito_brightness
                                   color_temp_kelvin: !input mosquito_color_temp
-                                  transition: !input transition_time
                               - action: homeassistant.turn_off
                                 target:
                                   entity_id: !input light_target
-                                data: "{{ main_off_data }}"
                             else:
                               # Auxiliar não dá conta -> principal assume o mosquito,
                               # mesmo em modo "somente auxiliar"
@@ -732,7 +707,6 @@ actions:
                                     data:
                                       brightness_pct: !input mosquito_brightness
                                       color_temp_kelvin: !input mosquito_color_temp
-                                      transition: !input transition_time
                                 else:
                                   - action: homeassistant.turn_on
                                     target:
@@ -740,7 +714,6 @@ actions:
                               - action: homeassistant.turn_off
                                 target:
                                   entity_id: "{{ aux_light_entity }}"
-                                data: "{{ aux_off_data }}"
                         else:
                           # Sem mosquito -> comportamento normal do dia (somente auxiliar)
                           - if:
@@ -753,7 +726,6 @@ actions:
                                 data:
                                   brightness_pct: 100
                                   color_temp_kelvin: !input day_color_temp
-                                  transition: !input transition_time
                             else:
                               - action: homeassistant.turn_on
                                 target:
@@ -761,7 +733,6 @@ actions:
                           - action: homeassistant.turn_off
                             target:
                               entity_id: !input light_target
-                            data: "{{ main_off_data }}"
                     else:
                       # Principal + auxiliar juntas
                       - if:
@@ -778,7 +749,6 @@ actions:
                                 data:
                                   brightness_pct: !input mosquito_brightness
                                   color_temp_kelvin: !input mosquito_color_temp
-                                  transition: !input transition_time
                           - if:
                               - condition: template
                                 value_template: "{{ aux_is_dimmable }}"
@@ -789,7 +759,6 @@ actions:
                                 data:
                                   brightness_pct: !input mosquito_brightness
                                   color_temp_kelvin: !input mosquito_color_temp
-                                  transition: !input transition_time
                         else:
                           - if:
                               - condition: template
@@ -801,7 +770,6 @@ actions:
                                 data:
                                   brightness_pct: 100
                                   color_temp_kelvin: !input day_color_temp
-                                  transition: !input transition_time
                             else:
                               - action: homeassistant.turn_on
                                 target:
@@ -816,7 +784,6 @@ actions:
                                 data:
                                   brightness_pct: 100
                                   color_temp_kelvin: !input day_color_temp
-                                  transition: !input transition_time
                             else:
                               - action: homeassistant.turn_on
                                 target:
@@ -837,7 +804,6 @@ actions:
                             data:
                               brightness_pct: !input mosquito_brightness
                               color_temp_kelvin: !input mosquito_color_temp
-                              transition: !input transition_time
                     else:
                       - if:
                           - condition: template
@@ -849,7 +815,6 @@ actions:
                             data:
                               brightness_pct: 100
                               color_temp_kelvin: !input day_color_temp
-                              transition: !input transition_time
                         else:
                           - action: homeassistant.turn_on
                             target:
